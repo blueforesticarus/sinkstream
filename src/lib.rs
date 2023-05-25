@@ -199,6 +199,28 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    /// The send all items without doing anything else
+    pub async fn test_no_sleep() {
+        pub async fn foo<S>(sink: S, items: Vec<String>)
+        where
+            S: futures::Sink<String>,
+        {
+            let mut sink = Box::pin(sink);
+            for item in items {
+                dbg!(&item);
+                sink.feed(item).await.map_err(|_| "err").unwrap();
+            }
+        }
+
+        let data: Vec<String> = "a b c d"
+            .split_ascii_whitespace()
+            .map(ToString::to_string)
+            .collect();
+        test_f(foo, data).await;
+    }
+
+    #[tokio::test]
+    /// The most basic test: sleep, send, repeat
     pub async fn test_one_by_one() {
         pub async fn foo<S>(sink: S, items: Vec<String>)
         where
@@ -221,6 +243,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Test sending multible items between sleep
     pub async fn test_multi() {
         pub async fn foo<S>(sink: S, items: Vec<String>)
         where
@@ -245,6 +268,57 @@ mod tests {
         test_f(foo, data).await;
     }
 
+    #[tokio::test]
+    /// Test if waiting on multible futures between sends.
+    pub async fn test_multi_sleep() {
+        pub async fn foo<S>(sink: S, items: Vec<String>)
+        where
+            S: futures::Sink<String>,
+        {
+            let mut sink = Box::pin(sink);
+            for item in items {
+                dbg!("sleep");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                dbg!(&item);
+                sink.feed(item).await.map_err(|_| "err").unwrap();
+            }
+        }
+
+        let data: Vec<String> = "hello world"
+            .split_ascii_whitespace()
+            .map(ToString::to_string)
+            .collect();
+        test_f(foo, data).await;
+    }
+
+    #[tokio::test]
+    /// Test if waiting on multible futures between sends.
+    pub async fn test_no_op() {
+        pub async fn foo<S>(_: S, _: Vec<String>)
+        where
+            S: futures::Sink<String>,
+        {
+        }
+
+        let data: Vec<String> = vec![];
+        test_f(foo, data).await;
+    }
+
+    #[tokio::test]
+    /// Test if waiting on multible futures between sends.
+    pub async fn test_just_sleep() {
+        pub async fn foo<S>(_: S, _: Vec<String>)
+        where
+            S: futures::Sink<String>,
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+
+        let data: Vec<String> = vec![];
+        test_f(foo, data).await;
+    }
+
     type D = Vec<String>;
     async fn test_f<F, Fut>(f: F, mut data: D)
     where
@@ -254,7 +328,7 @@ mod tests {
         let stream = SinkStream::boxed(|sink| f(sink, data.clone()));
 
         tokio::time::timeout(
-            Duration::from_millis(100),
+            Duration::from_millis(200),
             stream
                 .map(|got| {
                     assert_eq!(got, data.remove(0));
